@@ -4,14 +4,7 @@
   hosts: webservers
   become: true #Important to create an ssh key and allow user sudo without password prompt, otherwise run with option -K
 
-  vars:
-    webserver_package: "{{ webserver_package | default ('nginx') }}"
-    webserver_service:  "{{ webserver_service | default('nginx') }}"
-    webserver_index_path: "{{ webserver_index_path | default('/usr/share/nginx/html/index.html') }}"
-    webserver_index_content: "{{ webserver_index_content | default('Welcome to My Web Server') }}"
-
   tasks:
-    #TODO: the package will be selected with a variable
     - name: Install web server package
       ansible.builtin.package:
         name: "{{ webserver_package }}"
@@ -27,3 +20,26 @@
         group: "{{ ansible_user_id }}"
 
     - name: Deploy custom index page
+      ansible.builtin.template:
+        src: templates/index.html.j2
+        dest: "{{ webserver_index_path }}"
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+        mode: "0644"
+      notify: Reload web service
+
+    - name: Deploy core nginx.conf
+      ansible.builtin.template:
+        src: templates/nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+        group: "{{ ansible_user_id }}"
+        mode: "0644"
+        validate: nginx -t -c %s
+      notify: Reload web service
+      when: webserver_package == 'nginx'
+
+  handlers:
+    - name: Reload web service
+      ansible.builtin.service:
+        name: "{{ webserver_service }}"
+        state: reloaded
