@@ -1,0 +1,29 @@
+---
+
+- name: Configure the web server
+  hosts: webservers
+  become: true #Important to create an ssh key and allow user sudo without password prompt, otherwise run with option -K
+
+  vars:
+    webserver_package: "{{ webserver_package | default ('nginx') }}"
+    webserver_service:  "{{ webserver_service | default('nginx') }}"
+    webserver_index_path: "{{ webserver_index_path | default('/usr/share/nginx/html/index.html') }}"
+    webserver_index_content: "{{ webserver_index_content | default('Welcome to My Web Server') }}"
+
+  tasks:
+    #TODO: the package will be selected with a variable
+    - name: Install web server package
+      ansible.builtin.package:
+        name: "{{ webserver_package }}"
+        state: present
+
+    #Nginx runs from /sbin, it must be selected, for this play, the remote user Ansible connected as is named as the group. THis only works if the user's primary group shares the same name
+    - name: ensure /usr/sbin and /sbin are in PATH for interactive shells
+      ansible.builtin.lineinfile:
+        path: "{{ ansible_env.HOME }}/.bashrc" 
+        line: 'export PATH=$PATH:/usr/sbin:/sbin'
+        create: true
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+
+    - name: Deploy custom index page
