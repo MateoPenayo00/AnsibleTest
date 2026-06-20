@@ -44,16 +44,16 @@ nginx_server_blocks:
   - name: api.example.com
     listen_port: 443
     server_name: api.example.com
-    ssl_enabled: true
+    ssl_enabled: false
     proxy_pass: "http://api_backend"   # references the upstream defined below
 
 # ---------------------------------------------------------------------------
 # Reverse proxy / upstream pools
 # ---------------------------------------------------------------------------
 nginx_upstreams:
-  - name: api_backend
+  - name: api_backend     #Name for the pool servers that the reverse proxy runs
     strategy: least_conn          # round-robin (default), least_conn, ip_hash
-    servers:
+    servers:              #List of servers that run api_backend
       - address: 10.0.1.11:8080
         weight: 1
       - address: 10.0.1.12:8080
@@ -74,6 +74,7 @@ nginx_proxy_buffers_size: 4k
 # In real use, certs are usually delivered by a separate cert-management
 # step (certbot role, community.crypto, or copied from a vault/secret store).
 # This playbook assumes certs already exist at these paths on the target.
+# This is only an example, how I would really manage SSL: I would have the certificate in a higher reverse proxy
 nginx_ssl_cert_path: /etc/nginx/ssl/api.example.com.crt
 nginx_ssl_key_path: /etc/nginx/ssl/api.example.com.key
 nginx_ssl_protocols: "TLSv1.2 TLSv1.3"
