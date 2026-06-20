@@ -38,6 +38,25 @@
       notify: Reload web service
       when: webserver_package == 'nginx'
 
+    - name: Remove default ngingx server block
+      ansible.builtin.file:
+        path: /etc/nginx/conf.d/default.conf
+        state: absent
+      notify: Reload web service
+
+    - name: Deploy server block configs
+      ansible.builtin.template:
+        src: templates/server_block.conf.j2
+        dest: "/etc/nginx/conf.d/{{ server.name }}.conf"
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+        mode: "0644"
+      loop: "{{ nginx_server_blocks }}"
+      loop_control:
+        loop_var: server
+      notify: Reload web service
+
+
   handlers:
     - name: Reload web service
       ansible.builtin.service:

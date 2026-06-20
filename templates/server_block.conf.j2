@@ -1,0 +1,48 @@
+{% if server.redirect_to_https | default(false) %}
+# {{ server.name }} - HTTP -> HTTPS redirect
+server {
+    listen {{ server.listen_port }};
+    server_name {{ server.server_name }};
+    return 301 https://$host$request_uri;
+}
+{% else %}
+server {
+    listen {{ server.listen_port }}{% if server.ssl_enabled | default(false) %} ssl{% endif %};
+    server_name {{ server.server_name }};
+
+{% if server.ssl_enabled | default(false) %}
+    ssl_certificate     {{ nginx_ssl_cert_path }};
+    ssl_certificate_key {{ nginx_ssl_key_path }};
+    ssl_protocols       {{ nginx_ssl_protocols }};
+    ssl_ciphers         {{ nginx_ssl_ciphers }};
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache   {{ nginx_ssl_session_cache }};
+    ssl_session_timeout {{ nginx_ssl_session_timeout }};
+{% if nginx_hsts_enabled %}
+    add_header Strict-Transport-Security "max-age={{ nginx_hsts_max_age }}; includeSubDomains" always;
+{% endif %}
+{% endif %}
+
+    access_log /var/log/nginx/{{ server.name }}.access.log main;
+    error_log  /var/log/nginx/{{ server.name }}.error.log warn;
+
+{% if server.proxy_pass is defined %}
+    # Reverse proxy to upstream pool
+    location / {
+        proxy_pass {{ server.proxy_pass }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+{% else %}
+    # Static content
+    root {{ server.root }};
+    index {{ server.index | default('index.html') }};
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+{% endif %}
+}
+{% endif %}
