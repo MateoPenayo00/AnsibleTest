@@ -70,15 +70,15 @@
             path: "{{ ansible_env.HOME }}/.bashrc"
             line: 'export PATH=$PATH:/usr/sbin:/sbin'
             create: true
-            owner: "{{ ansible_user_id }}"
-            group: "{{ ansible_user_id }}"
+            owner: root
+            group: root
 
         - name: Deploy custom index page
           ansible.builtin.template:
             src: templates/index.html.j2
             dest: "{{ webserver_index_path }}"
-            owner: "{{ ansible_user_id }}"
-            group: "{{ ansible_user_id }}"
+            owner: root
+            group: root
             mode: "0644"
           notify: Reload web service
 
@@ -89,7 +89,7 @@
           ansible.builtin.template:
             src: templates/nginx.conf.j2
             dest: /etc/nginx/nginx.conf
-            group: "{{ ansible_user_id }}"
+            group: root
             mode: "0644"
             validate: nginx -t -c %s
           notify: Reload web service
@@ -106,8 +106,8 @@
           ansible.builtin.template:
             src: templates/server_block.conf.j2
             dest: "/etc/nginx/conf.d/{{ server.name }}.conf"
-            owner: "{{ ansible_user_id }}"
-            group: "{{ ansible_user_id }}"
+            owner: root
+            group: root
             mode: "0644"
           loop: "{{ nginx_server_blocks }}"
           loop_control:
@@ -132,7 +132,7 @@
           ansible.builtin.template:
             src: templates/httpd.conf.j2
             dest: "{{ '/etc/apache2/apache2.conf' if ansible_os_family == 'Debian' else '/etc/httpd/conf/httpd.conf' }}"
-            group: "{{ ansible_user_id }}"
+            group: root
             mode: "0644"
           notify: Reload web service
           when: webserver_package == 'httpd'
@@ -148,8 +148,8 @@
           ansible.builtin.file:
             path: "{{ vhost.document_root }}"
             state: directory
-            owner: "{{ httpd_user }}"
-            group: "{{ httpd_group }}"
+            owner: root
+            group: root
             mode: "0755"
           loop: "{{ httpd_vhosts }}"
           loop_control:
