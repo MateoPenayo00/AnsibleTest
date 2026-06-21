@@ -1,0 +1,28 @@
+{% if vhost.redirect_to_https | default(false) %}
+# {{ vhost.name }} - HTTP -> HTTPS redirect
+<VirtualHost *:{{ vhost.listen_port }}>
+    ServerName {{ vhost.server_name }}
+    Redirect permanent / https://{{ vhost.server_name }}/
+</VirtualHost>
+{% else %}
+<VirtualHost *:{{ vhost.listen_port }}>
+    ServerName {{ vhost.server_name }}
+
+    DocumentRoot {{ vhost.document_root }}
+
+{% if vhost.ssl_enabled | default(false) %}
+    SSLEngine on
+    SSLCertificateFile      {{ httpd_ssl_cert_path }}
+    SSLCertificateKeyFile   {{ httpd_ssl_key_path }}
+{% endif %}
+
+    ErrorLog  {{ '${APACHE_LOG_DIR}' if ansible_os_family == 'Debian' else '/var/log/httpd' }}/{{ vhost.name }}.error.log
+    CustomLog {{ '${APACHE_LOG_DIR}' if ansible_os_family == 'Debian' else '/var/log/httpd' }}/{{ vhost.name }}.access.log combined
+
+    <Directory "{{ vhost.document_root }}">
+        Options -Indexes +FollowSymLinks
+        AllowOverride None
+        Require all granted
+    </Directory>
+</VirtualHost>
+{% endif %}

@@ -1,0 +1,124 @@
+{% if ansible_os_family == 'Debian' %}
+# ---------------------------------------------------------------------------
+# Debian (apache2) layout
+# ---------------------------------------------------------------------------
+# ServerRoot, PidFile, and User/Group are intentionally NOT set here — on
+# Debian these are controlled by /etc/apache2/envvars (APACHE_RUN_USER,
+# APACHE_RUN_GROUP, APACHE_PID_FILE) and apachectl sources that file before
+# reading this conf.
+PidFile ${APACHE_PID_FILE}
+ServerAdmin {{ httpd_server_admin }}
+User ${APACHE_RUN_USER}
+Group ${APACHE_RUN_GROUP}
+
+# Loads mpm_event, mod_deflate, mod_headers, mod_ssl, etc. Without this,
+# none of the <IfModule> blocks below have anything to match — Apache will
+# fail to start with "No MPM loaded" if this is omitted.
+IncludeOptional mods-enabled/*.load
+IncludeOptional mods-enabled/*.conf
+
+# Listen directives live here, not inline in this file.
+Include ports.conf
+
+# Default security baseline shipped by the apache2 package: deny by default
+# outside /usr/share and /var/www. Kept here since this file replaces the
+# package's stock apache2.conf wholesale.
+<Directory />
+    Options FollowSymLinks
+    AllowOverride None
+    Require all denied
+</Directory>
+
+<Directory /usr/share>
+    AllowOverride None
+    Require all granted
+</Directory>
+
+<Directory /var/www/>
+    Options Indexes FollowSymLinks
+    AllowOverride None
+    Require all granted
+</Directory>
+
+{% else %}
+# ---------------------------------------------------------------------------
+# RHEL-family (httpd) layout
+# ---------------------------------------------------------------------------
+ServerRoot "/etc/httpd"
+ServerAdmin {{ httpd_server_admin }}
+PidFile /run/httpd/httpd.pid
+
+User {{ httpd_user }}
+Group {{ httpd_group }}
+
+Listen 80
+
+Include conf.modules.d/*.conf
+{% endif %}
+
+<IfModule mpm_event_module>
+    StartServers          {{ httpd_start_servers }}
+    MinSpareThreads       {{ httpd_min_spare_threads }}
+    MaxSpareThreads       {{ httpd_max_spare_threads }}
+    ThreadLimit            {{ httpd_thread_limit }}
+    ThreadsPerChild       {{ httpd_threads_per_child }}
+    MaxRequestWorkers     {{ httpd_max_request_workers }}
+</IfModule>
+
+KeepAlive On
+KeepAliveTimeout {{ httpd_keepalive_timeout }}
+LimitRequestBody {{ (httpd_client_max_body_size | regex_replace('M$', '') | int) * 1024 * 1024 }}
+
+{% if ansible_os_family == 'Debian' %}
+ErrorLog ${APACHE_LOG_DIR}/error.log
+{% else %}
+ErrorLog /var/log/httpd/error.log
+{% endif %}
+LogLevel warn
+
+LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
+{% if ansible_os_family == 'Debian' %}
+CustomLog ${APACHE_LOG_DIR}/access.log combined
+{% else %}
+CustomLog /var/log/httpd/access.log combined
+{% endif %}
+
+TypesConfig /etc/mime.types
+DefaultType text/plain
+
+{% if httpd_gzip_enabled %}
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE {{ httpd_gzip_types | join(' ') }}
+</IfModule>
+{% endif %}
+
+{% if httpd_hsts_enabled %}
+<IfModule mod_headers.c>
+    Header always set Strict-Transport-Security "max-age={{ httpd_hsts_max_age }}; includeSubDomains"
+</IfModule>
+{% endif %}
+
+{% if httpd_vhosts | selectattr('ssl_enabled', 'defined') | selectattr('ssl_enabled') | list | length > 0 %}
+{% if ansible_os_family != 'Debian' %}
+Listen 443
+{% endif %}
+<IfModule mod_ssl.c>
+    SSLProtocol {{ httpd_ssl_protocols }}
+    SSLCipherSuite {{ httpd_ssl_ciphers }}
+    SSLHonorCipherOrder on
+    SSLSessionCache {{ httpd_ssl_session_cache }}
+    SSLSessionCacheTimeout {{ httpd_ssl_session_timeout }}
+</IfModule>
+{% endif %}
+
+AccessFileName .htaccess
+<FilesMatch "^\.ht">
+    Require all denied
+</FilesMatch>
+
+{% if ansible_os_family == 'Debian' %}
+IncludeOptional conf-enabled/*.conf
+IncludeOptional sites-enabled/*.conf
+{% else %}
+IncludeOptional conf.d/*.conf
+{% endif %}

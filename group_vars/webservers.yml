@@ -1,13 +1,13 @@
 ---
+webserver_package: httpd
 
-
-webserver_package: nginx
-webserver_service: nginx
 # ---------------------------------------------------------------------------
 # Package / service
 # ---------------------------------------------------------------------------
 
-webserver_index_path: /usr/share/nginx/html/index.html
+webserver_index_path: "{{ {'nginx': '/usr/share/nginx/html/index.html',
+
+                            'httpd': '/var/www/html/index.html'}[webserver_package] }}"
 webserver_index_content: "Welcome to My Web Server"
 
 # ---------------------------------------------------------------------------
@@ -15,6 +15,7 @@ webserver_index_content: "Welcome to My Web Server"
 # ---------------------------------------------------------------------------
 
 nginx_user: "{{ 'www-data' if ansible_os_family == 'Debian' else 'nginx' }}"
+nginx_service_name: nginx
 nginx_worker_processes: auto
 nginx_worker_connections: 1024
 nginx_keepalive_timeout: 65
@@ -84,3 +85,77 @@ nginx_ssl_session_timeout: "1d"
 nginx_hsts_enabled: true
 nginx_hsts_max_age: 31536000   # 1 year, in seconds
 
+# ===========================================================================
+# httpd (Apache) configuration
+# ===========================================================================
+# Mirrors the structure of the nginx_* block above, but expressed in Apache's
+# own terms rather than forcing nginx vocabulary onto it. Only consulted when
+# webserver_package == 'httpd'. Scope is vhosts + SSL — no reverse proxy /
+# upstream pools (see nginx_upstreams for that pattern if it's ever needed
+# here; mod_proxy_balancer would be the Apache equivalent).
+
+# ---------------------------------------------------------------------------
+# Core config (httpd.conf — server-wide globals)
+# ---------------------------------------------------------------------------
+
+httpd_package_name: "{{ 'apache2' if ansible_os_family == 'Debian' else 'httpd' }}"
+httpd_service_name: "{{ 'apache2' if ansible_os_family == 'Debian' else 'httpd' }}"
+
+# Apache's user/group directives only apply on RHEL-family httpd.conf;
+# Debian's apache2 sets this via envvars instead, but we keep one var for
+# the template to reference either way.
+httpd_user: "{{ 'www-data' if ansible_os_family == 'Debian' else 'apache' }}"
+httpd_group: "{{ 'www-data' if ansible_os_family == 'Debian' else 'apache' }}"
+
+httpd_server_admin: webmaster@example.com
+# MPM event worker tuning — rough equivalent of nginx_worker_connections
+httpd_start_servers: 2
+httpd_min_spare_threads: 25
+httpd_max_spare_threads: 75
+httpd_thread_limit: 64
+httpd_threads_per_child: 25
+httpd_max_request_workers: 150
+
+httpd_keepalive_timeout: 65
+httpd_client_max_body_size: 10M   # consumed via LimitRequestBody (bytes, converted in template)
+
+httpd_gzip_enabled: true   # maps to mod_deflate
+httpd_gzip_types:
+  - text/plain
+  - text/css
+  - application/json
+  - application/javascript
+  - text/xml
+  - application/xml
+
+# ---------------------------------------------------------------------------
+# Virtual hosts
+# ---------------------------------------------------------------------------
+# Each item becomes its own file in sites-available (Debian) or conf.d
+# (RHEL-family) via the same loop pattern used for nginx_server_blocks.
+httpd_vhosts:
+  - name: app.example.com
+    listen_port: 80
+    server_name: app.example.com
+    document_root: /var/www/app.example.com
+    redirect_to_https: true        # 80 -> 443 redirect only, no content served here
+
+  - name: api.example.com
+    listen_port: 443
+    server_name: api.example.com
+    ssl_enabled: false
+    document_root: /var/www/api.example.com
+
+# ---------------------------------------------------------------------------
+# SSL/TLS
+# ---------------------------------------------------------------------------
+# Same assumption as nginx_ssl_*: certs already exist on the target,
+# delivered by a separate cert-management step.
+httpd_ssl_cert_path: /etc/httpd/ssl/api.example.com.crt
+httpd_ssl_key_path: /etc/httpd/ssl/api.example.com.key
+httpd_ssl_protocols: "TLSv1.2 TLSv1.3"
+httpd_ssl_ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+httpd_ssl_session_cache: "shmcb:/var/cache/mod_ssl/scache(512000)"
+httpd_ssl_session_timeout: 86400   # seconds (1 day) — mod_ssl wants raw seconds, not "1d"
+httpd_hsts_enabled: true
+httpd_hsts_max_age: 31536000   # 1 year, in seconds
