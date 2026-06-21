@@ -1,3 +1,17 @@
+# =============================================================================
+# nginx.conf — global server config, rendered by Ansible
+# =============================================================================
+# Deployed to /etc/nginx/nginx.conf by playbook.yaml when
+# webserver_package == 'nginx'. Per-site config lives in separate files
+# under conf.d/ (see templates/server_block.conf.j2 + the `include` at the
+# bottom of this file) — this file only holds the global http{} settings.
+#
+# Source variables: group_vars/webservers.yml, section "2. NGINX
+# CONFIGURATION". Validated on deploy via `nginx -t -c %s` (see the
+# `validate:` line on the Ansible template task) and again explicitly later
+# in the play via a standalone `nginx -t` run.
+# =============================================================================
+
 user {{ nginx_user }};
 worker_processes {{ nginx_worker_processes }};
 
@@ -25,18 +39,24 @@ http {
     client_max_body_size {{ nginx_client_max_body_size }};
 
 {% if nginx_gzip_enabled %}
+    # Compression for the response types listed in nginx_gzip_types.
     gzip on;
     gzip_vary on;
     gzip_comp_level 5;
     gzip_min_length 256;
     gzip_types {{ nginx_gzip_types | join(' ') }};
 {% endif %}
-    # Reverse proxy buffer tuning (applies to any location using proxy_pass)
+    # Reverse proxy buffer/timeout tuning. Applies globally to any
+    # location block using proxy_pass, in any conf.d/*.conf file included
+    # below — these directives are inherited, not declared per-block.
     proxy_connect_timeout {{ nginx_proxy_connect_timeout }};
     proxy_read_timeout    {{ nginx_proxy_read_timeout }};
     proxy_send_timeout    {{ nginx_proxy_send_timeout }};
     proxy_buffer_size     {{ nginx_proxy_buffer_size }};
     proxy_buffers         {{ nginx_proxy_buffers_number }} {{ nginx_proxy_buffers_size }};
+
+    # One `upstream {}` block per entry in nginx_upstreams. A server block
+    # in conf.d/ then targets one of these by name via `proxy_pass`.
 {% for upstream in nginx_upstreams %}
     upstream {{ upstream.name }} {
 {% if upstream.strategy == 'least_conn' %}
@@ -44,11 +64,16 @@ http {
 {% elif upstream.strategy == 'ip_hash' %}
         ip_hash;
 {% endif %}
+        {# strategy omitted entirely => nginx defaults to round-robin #}
 {% for srv in upstream.servers %}
         server {{ srv.address }}{% if srv.weight is defined %} weight={{ srv.weight }}{% endif %};
 {% endfor %}
     }
 {% endfor %}
 
+    # Per-site server blocks — one file per entry in nginx_server_blocks,
+    # deployed by templates/server_block.conf.j2. default.conf (the
+    # package's stock placeholder site) is explicitly removed by the
+    # playbook before this include runs, so only our own blocks land here.
     include /etc/nginx/conf.d/*.conf;
 }

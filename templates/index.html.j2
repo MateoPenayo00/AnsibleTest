@@ -1,3 +1,16 @@
+<!--
+  index.html.j2 — shared default index page
+
+  Used by BOTH backends (nginx and httpd) — this is the one template that
+  doesn't need an OS/package conditional, since the rendered HTML doesn't
+  depend on which webserver is serving it. Deployed to webserver_index_path
+  (group_vars/webservers.yml), which resolves to a different filesystem
+  path per backend, but the template content itself is identical either way.
+
+  NOTE: this only deploys to the single DEFAULT docroot. Per-vhost docroots
+  (nginx_server_blocks / httpd_vhosts) are created empty and are NOT seeded
+  with this file — see the comments in group_vars/webservers.yml §2b/§3b.
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>

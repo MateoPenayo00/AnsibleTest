@@ -1,8 +1,30 @@
 ---
+# =============================================================================
+# AnsibleTest — Web server provisioning playbook
+# =============================================================================
+# Installs and configures ONE of two webserver backends — nginx or httpd
+# (Apache) — on every host in the `webservers` group. Which backend runs is
+# controlled entirely by the `webserver_package` variable in
+# group_vars/webservers.yml; see README_DESIGN.md for the full picture.
+#
+# High-level flow per run:
+#   1. Stop/disable whichever backend is NOT selected (handles switching
+#      an already-configured host from one backend to the other).
+#   2. Install the selected backend's package.
+#   3. Deploy its config + per-site templates.
+#   4. Validate the rendered config (`nginx -t` / `apache2ctl -t`).
+#   5. Start and enable the service.
+# Steps 2-5 are wrapped in block/rescue/always — see the comment above that
+# block below for details on the error-handling strategy.
+# =============================================================================
 
 - name: Configure the web server
   hosts: webservers
-  become: true #Important to create an ssh key and allow user sudo without password prompt, otherwise run with option -K
+  # become is required because installing packages, writing to /etc, and
+  # managing services all need root. Assumes passwordless sudo is already
+  # set up for ansible_user (e.g. via an SSH key + sudoers NOPASSWD entry);
+  # otherwise run with `--ask-become-pass` / `-K`.
+  become: true
 
   vars:
     # Resolves the actual OS package/service name from webserver_package.
@@ -55,8 +77,27 @@
             name: "{{ _webserver_package_name }}"
             state: present
 
-        #Nginx runs from /sbin, it must be selected, for this play, the remote user Ansible connected as is named as the group. THis only works if the user's primary group shares the same name
-        - name: ensure /usr/sbin and /sbin are in PATH for interactive shells
+        - name: Remove all existing nginx conf.d files before redeploying
+          ansible.builtin.file:
+            path: /etc/nginx/conf.d
+            state: "{{ item }}"
+          loop: [absent, directory]
+          when: webserver_package == 'nginx'
+
+        - name: Remove all existing httpd vhost files before redeploying
+          ansible.builtin.file:
+            path: "{{ '/etc/apache2/sites-enabled' if ansible_os_family == 'Debian' else '/etc/httpd/conf.d' }}"
+            state: "{{ item }}"
+          loop: [absent, directory]
+          when: webserver_package == 'httpd'
+
+
+        # nginx's binary lives in /usr/sbin, which often isn't on the PATH
+        # for interactive (non-login) shells. This just makes it convenient
+        # to run `nginx`/`apachectl` by hand when SSH'd in directly — it has
+        # no effect on the playbook itself, which calls binaries by full
+        # context (PATH is already correct for module/command execution).
+        - name: Ensure /usr/sbin and /sbin are in PATH for interactive shells
           ansible.builtin.lineinfile:
             path: "{{ ansible_env.HOME }}/.bashrc"
             line: 'export PATH=$PATH:/usr/sbin:/sbin'
@@ -181,46 +222,33 @@
           when: webserver_package == 'httpd'
 
         # -------------------------------------------------------------------
-        # Targeted is-failed check: config validation is the single most
+        # Targeted failure check: config validation is the single most
         # likely and most actionable failure point in this play (a typo'd
-        # template var, a bad cert path, a missing module). Calling it out
-        # specifically — distinct from the generic rescue: below — makes the
-        # cause obvious in the run output before Ansible even gets to
-        # deciding the block has failed.
+        # template variable, a bad cert path, a missing Apache module). This
+        # ansible.builtin.fail task prints the validator's own stderr in its
+        # message — that's distinct from, and more specific than, the
+        # generic rescue: handler below, so the actual cause is visible
+        # before Ansible even gets to deciding the whole block has failed.
         # -------------------------------------------------------------------
-        - name: Report nginx configuration validation failure
-          ansible.builtin.debug:
+        - name: Fail with details if nginx configuration is invalid
+          ansible.builtin.fail:
             msg: >-
-              nginx configuration test FAILED. Check the rendered output of
-              templates/nginx.conf.j2 and templates/server_block.conf.j2 on
-              the target — stderr was: {{ nginx_config_test.stderr | default('n/a') }}
+              nginx -t reported a configuration error. Check the rendered
+              output of templates/nginx.conf.j2 and
+              templates/server_block.conf.j2 on the target.
+              stderr: {{ nginx_config_test.stderr | default('n/a') }}
           when:
             - webserver_package == 'nginx'
             - nginx_config_test is defined
             - nginx_config_test.rc | default(0) != 0
 
-        - name: Fail the play if nginx configuration is invalid
+        - name: Fail with details if httpd configuration is invalid
           ansible.builtin.fail:
-            msg: "nginx -t reported a configuration error — see the debug message above."
-          when:
-            - webserver_package == 'nginx'
-            - nginx_config_test is defined
-            - nginx_config_test.rc | default(0) != 0
-
-        - name: Report httpd configuration validation failure
-          ansible.builtin.debug:
             msg: >-
-              httpd configuration test FAILED. Check the rendered output of
-              templates/httpd.conf.j2 and templates/vhost.conf.j2 on the
-              target — stderr was: {{ httpd_config_test.stderr | default('n/a') }}
-          when:
-            - webserver_package == 'httpd'
-            - httpd_config_test is defined
-            - httpd_config_test.rc | default(0) != 0
-
-        - name: Fail the play if httpd configuration is invalid
-          ansible.builtin.fail:
-            msg: "apache2ctl/httpd -t reported a configuration error — see the debug message above."
+              apache2ctl/httpd -t reported a configuration error. Check the
+              rendered output of templates/httpd.conf.j2 and
+              templates/vhost.conf.j2 on the target.
+              stderr: {{ httpd_config_test.stderr | default('n/a') }}
           when:
             - webserver_package == 'httpd'
             - httpd_config_test is defined

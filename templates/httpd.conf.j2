@@ -1,3 +1,25 @@
+{# =============================================================================
+   httpd.conf.j2 — global Apache server config, rendered by Ansible
+   =============================================================================
+   Deployed by playbook.yaml when webserver_package == 'httpd', to:
+     - /etc/apache2/apache2.conf   (Debian — REPLACES the package's stock file)
+     - /etc/httpd/conf/httpd.conf  (RHEL-family — REPLACES the stock file)
+
+   Per-site config lives in separate files under sites-enabled/ (Debian) or
+   conf.d/ (RHEL), deployed by templates/vhost.conf.j2 — this file only
+   holds the global, server-wide settings.
+
+   Source variables: group_vars/webservers.yml, section "3. HTTPD (APACHE)
+   CONFIGURATION". Validated via `apache2ctl -t` / `httpd -t`.
+
+   DEBIAN vs RHEL: Apache's package layout differs significantly between
+   the two families (module loading, port declarations, where User/Group
+   come from) — this template branches on ansible_os_family throughout
+   rather than trying to force one layout onto both. The Debian branch has
+   been exercised against a real apache2 install; the RHEL branch is
+   currently verified by template-rendering checks only (see
+   README_DESIGN.md, "Testing status").
+   ============================================================================= #}
 {% if ansible_os_family == 'Debian' %}
 # ---------------------------------------------------------------------------
 # Debian (apache2) layout
@@ -56,6 +78,11 @@ Listen 80
 Include conf.modules.d/*.conf
 {% endif %}
 
+# MPM event worker tuning — see httpd_start_servers etc. in group_vars for
+# what each of these controls. Apache's rough equivalent of nginx's
+# worker_processes/worker_connections. Requires mods-enabled/mpm_event.load
+# (Debian) or conf.modules.d (RHEL) to actually be loaded above, or this
+# <IfModule> simply won't match and these settings are silently skipped.
 <IfModule mpm_event_module>
     StartServers          {{ httpd_start_servers }}
     MinSpareThreads       {{ httpd_min_spare_threads }}
@@ -67,6 +94,12 @@ Include conf.modules.d/*.conf
 
 KeepAlive On
 KeepAliveTimeout {{ httpd_keepalive_timeout }}
+{# Apache's LimitRequestBody wants a raw byte count, but
+   httpd_client_max_body_size is given in human-friendly form (e.g. "10M")
+   to match nginx_client_max_body_size's style. This strips a trailing "M"
+   and multiplies by 1024*1024 to convert. Only handles the "M" (megabyte)
+   suffix — if you ever set a "G" or "K" value in group_vars, this
+   conversion needs updating too. #}
 LimitRequestBody {{ (httpd_client_max_body_size | regex_replace('M$', '') | int) * 1024 * 1024 }}
 
 {% if ansible_os_family == 'Debian' %}
@@ -99,6 +132,10 @@ DefaultType text/plain
 {% endif %}
 
 {% if httpd_vhosts | selectattr('ssl_enabled', 'defined') | selectattr('ssl_enabled') | list | length > 0 %}
+{# Only declare Listen 443 + load mod_ssl globals if at least one vhost
+   actually uses SSL — avoids an unused listener if every vhost is plain
+   HTTP. On Debian, port 80/443 listeners come from ports.conf (included
+   above) rather than being declared here, so this Listen line is RHEL-only. #}
 {% if ansible_os_family != 'Debian' %}
 Listen 443
 {% endif %}
@@ -109,6 +146,13 @@ Listen 443
     SSLSessionCache {{ httpd_ssl_session_cache }}
     SSLSessionCacheTimeout {{ httpd_ssl_session_timeout }}
 </IfModule>
+{# KNOWN GAP: on Debian, mod_ssl is not enabled by default (`a2enmod ssl`
+   is required) — the IfModule guard above means this degrades safely
+   (silently skipped) rather than failing if it's missing, but an SSL
+   vhost won't actually serve HTTPS until the module is enabled. The
+   playbook does not currently run `a2enmod` for you; do it manually
+   (`sudo a2enmod ssl headers deflate && sudo systemctl restart apache2`)
+   before relying on SSL-enabled vhosts on a fresh Debian host. #}
 {% endif %}
 
 AccessFileName .htaccess

@@ -1,3 +1,24 @@
+{# =============================================================================
+   vhost.conf.j2 — per-site Apache virtual host
+   =============================================================================
+   Rendered once per entry in httpd_vhosts (group_vars/webservers.yml, §3b),
+   looped over by playbook.yaml. Each rendering is deployed to
+   sites-enabled/<name>.conf (Debian) or conf.d/<name>.conf (RHEL-family)
+   and picked up automatically by the IncludeOptional line at the bottom of
+   httpd.conf.j2.
+
+   The loop variable is `vhost` (set via loop_control / loop_var in the
+   playbook — NOT the default `item`, matching the same pattern used for
+   nginx_server_blocks' `server` loop var).
+
+   Two possible outputs depending on redirect_to_https:
+     1. redirect_to_https: true -> bare 80->443 redirect, nothing else below applies
+     2. otherwise               -> content vhost serving document_root,
+                                    optionally with SSL if ssl_enabled: true
+
+   Unlike server_block.conf.j2 (nginx), there is no reverse-proxy variant
+   here — httpd vhosts in this playbook only serve static content.
+   ============================================================================= #}
 {% if vhost.redirect_to_https | default(false) %}
 # {{ vhost.name }} - HTTP -> HTTPS redirect
 <VirtualHost *:{{ vhost.listen_port }}>
@@ -8,18 +29,32 @@
 <VirtualHost *:{{ vhost.listen_port }}>
     ServerName {{ vhost.server_name }}
 
+    {# document_root is created by the "Ensure vhost document roots exist"
+       task in playbook.yaml before this template is even rendered — it's
+       guaranteed to exist by the time Apache starts, but is NOT seeded
+       with any content (see the note in group_vars/webservers.yml §3b). #}
     DocumentRoot {{ vhost.document_root }}
 
 {% if vhost.ssl_enabled | default(false) %}
+    {# Same cert/key for every SSL vhost, defined once in group_vars
+       (httpd_ssl_*) — same single-cert assumption as nginx's server
+       blocks. See the KNOWN GAP note in httpd.conf.j2 re: mod_ssl needing
+       to be enabled on Debian before this actually serves HTTPS. #}
     SSLEngine on
     SSLCertificateFile      {{ httpd_ssl_cert_path }}
     SSLCertificateKeyFile   {{ httpd_ssl_key_path }}
 {% endif %}
 
+    {# ${APACHE_LOG_DIR} is a Debian-only envvar (set in /etc/apache2/envvars,
+       expands to /var/log/apache2); RHEL has no equivalent shell-style
+       expansion in httpd.conf, so we fall back to a literal path there. #}
     ErrorLog  {{ '${APACHE_LOG_DIR}' if ansible_os_family == 'Debian' else '/var/log/httpd' }}/{{ vhost.name }}.error.log
     CustomLog {{ '${APACHE_LOG_DIR}' if ansible_os_family == 'Debian' else '/var/log/httpd' }}/{{ vhost.name }}.access.log combined
 
     <Directory "{{ vhost.document_root }}">
+        {# -Indexes: don't show a directory listing if there's no index
+           file present (relevant since this directory may start empty —
+           see the DocumentRoot note above). #}
         Options -Indexes +FollowSymLinks
         AllowOverride None
         Require all granted

@@ -1,3 +1,20 @@
+{# =============================================================================
+   server_block.conf.j2 — per-site nginx virtual host
+   =============================================================================
+   Rendered once per entry in nginx_server_blocks (group_vars/webservers.yml,
+   §2b), looped over by playbook.yaml. Each rendering is deployed to
+   /etc/nginx/conf.d/<name>.conf and picked up automatically by the
+   `include /etc/nginx/conf.d/*.conf;` line in nginx.conf.j2.
+
+   The loop variable is `server` (set via loop_control / loop_var in the
+   playbook — NOT the default `item`, to avoid shadowing and to make this
+   template self-documenting about what it expects).
+
+   Three possible outputs depending on which keys are set on this entry:
+     1. redirect_to_https: true  -> bare 80->443 redirect, nothing else below applies
+     2. proxy_pass defined       -> reverse-proxy location block
+     3. neither of the above     -> static content, served from `root`
+   ============================================================================= #}
 {% if server.redirect_to_https | default(false) %}
 # {{ server.name }} - HTTP -> HTTPS redirect
 server {
@@ -11,6 +28,10 @@ server {
     server_name {{ server.server_name }};
 
 {% if server.ssl_enabled | default(false) %}
+    {# TLS settings are shared across every SSL-enabled block — defined
+       once in group_vars (nginx_ssl_*), not per-block, so all sites use
+       the same protocols/ciphers/cert. If different sites ever need
+       different certs, this would need to become per-block variables. #}
     ssl_certificate     {{ nginx_ssl_cert_path }};
     ssl_certificate_key {{ nginx_ssl_key_path }};
     ssl_protocols       {{ nginx_ssl_protocols }};
@@ -27,7 +48,11 @@ server {
     error_log  /var/log/nginx/{{ server.name }}.error.log warn;
 
 {% if server.proxy_pass is defined %}
-    # Reverse proxy to upstream pool
+    # Reverse proxy to an upstream pool (must match a name defined in
+    # nginx_upstreams — see nginx.conf.j2 for where the upstream{} block
+    # itself gets rendered). The X-Forwarded-* headers preserve the
+    # original client info for the backend, since otherwise it would only
+    # see requests coming from this nginx host.
     location / {
         proxy_pass {{ server.proxy_pass }};
         proxy_set_header Host $host;
@@ -36,11 +61,13 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 {% else %}
-    # Static content
+    # Static content, served directly from disk.
     root {{ server.root }};
     index {{ server.index | default('index.html') }};
 
     location / {
+        # Try the exact file, then the path as a directory, then 404 —
+        # standard static-site fallback chain.
         try_files $uri $uri/ =404;
     }
 {% endif %}
