@@ -1,21 +1,27 @@
 ---
-webserver_package: nginx
 
 # ---------------------------------------------------------------------------
-# Package / service
+# Package / service switch
 # ---------------------------------------------------------------------------
+# webserver_package is the single source of truth for which webserver this
+# host runs. Valid values: "nginx" or "httpd". The playbook reads this to
+# decide which install/config/template tasks to run; group-specific vars
+# below (nginx_* vs httpd_*) only apply when this matches.
+webserver_package: httpd   # <-- FAIL TEST: switched from nginx
 
-webserver_index_path: "{{ {'nginx': '/usr/share/nginx/html/index.html',
-
-                            'httpd': '/var/www/html/index.html'}[webserver_package] }}"
 webserver_index_content: "Welcome to My Web Server"
+
+# Index path depends on which webserver owns the docroot, so it's expressed
+# as a lookup keyed by webserver_package rather than duplicated per-package.
+webserver_index_path: "{{ {'nginx': '/usr/share/nginx/html/index.html',
+                            'httpd': '/var/www/html/index.html'}[webserver_package] }}"
 
 # ---------------------------------------------------------------------------
 # Core config (nginx.conf — http block globals)
 # ---------------------------------------------------------------------------
 
 nginx_user: "{{ 'www-data' if ansible_os_family == 'Debian' else 'nginx' }}"
-nginx_service_name: nginx
+nginx_service_name: nginx   # the package name IS the service name for nginx on every distro we target
 nginx_worker_processes: auto
 nginx_worker_connections: 1024
 nginx_keepalive_timeout: 65
@@ -143,7 +149,7 @@ httpd_vhosts:
   - name: api.example.com
     listen_port: 443
     server_name: api.example.com
-    ssl_enabled: false
+    ssl_enabled: true
     document_root: /var/www/api.example.com
 
 # ---------------------------------------------------------------------------
@@ -155,7 +161,7 @@ httpd_ssl_cert_path: /etc/httpd/ssl/api.example.com.crt
 httpd_ssl_key_path: /etc/httpd/ssl/api.example.com.key
 httpd_ssl_protocols: "TLSv1.2 TLSv1.3"
 httpd_ssl_ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
-httpd_ssl_session_cache: "shmcb:/var/cache/mod_ssl/scache(512000)"
+httpd_ssl_session_cache: "this_is_not_a_valid_ssl_session_cache_value"   # <-- FAIL TEST: mod_ssl requires "none", "shmcb:/path(size)", or "dbm:/path"
 httpd_ssl_session_timeout: 86400   # seconds (1 day) — mod_ssl wants raw seconds, not "1d"
 httpd_hsts_enabled: true
 httpd_hsts_max_age: 31536000   # 1 year, in seconds
