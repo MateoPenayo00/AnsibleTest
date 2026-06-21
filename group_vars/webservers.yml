@@ -1,67 +1,37 @@
 ---
-# =============================================================================
+# ---------------------------------------------------------------------------
 # group_vars/webservers.yml
-# =============================================================================
-# Configuration for every host in the `webservers` inventory group. Applies
-# automatically to any host in that group — no per-host setup needed beyond
-# adding it to inventory.yaml.
+# Configuration for every host in the`webservers inventory group. 
 #
-# This file supports TWO webserver backends, nginx and httpd (Apache), but
-# each host only runs ONE at a time. See README_DESIGN.md for the full
-# design rationale; the short version is in §1 below.
-# =============================================================================
+# This file supports TWO webserver backends, nginx and httpd (Apache), but each host only runs ONE at a time.
 
+# ---------------------------------------------------------------------------
+# webserver_package is the single source of truth for which backend this host runs. 
+# Valid values: "nginx" or "httpd". 
 
-# =============================================================================
-# 1. THE SWITCH
-# =============================================================================
-# webserver_package is the single source of truth for which backend this
-# host runs. Valid values: "nginx" or "httpd". Everything else in this file
-# is grouped into nginx_* / httpd_* blocks; only the block matching this
-# value is actually read by the playbook — the other sits inert.
-#
-# This is the ONLY line you need to change to switch backends. Package
-# names, service names, and index paths all resolve automatically from it.
 webserver_package: httpd
 
 # ---------------------------------------------------------------------------
 # Shared settings (apply no matter which backend is selected)
-# ---------------------------------------------------------------------------
-
-# Text shown on the default index page (templates/index.html.j2).
 webserver_index_content: "Welcome to My Web Server"
 
-# Path to the default index file. Computed from webserver_package via a
-# dict lookup rather than hardcoded, since nginx and httpd use different
-# default docroots on Debian. Don't edit this directly — if you need a
-# different docroot, change the paths in the dict itself.
+# Path to the default index file. Computed from webserver_package via a dict lookup rather than hardcoded, 
+# since nginx and httpd use different default docroots on Debian. 
 webserver_index_path: "{{ {'nginx': '/usr/share/nginx/html/index.html',
                             'httpd': '/var/www/html/index.html'}[webserver_package] }}"
 
 
-# =============================================================================
-# 2. NGINX CONFIGURATION (nginx_*)
-# =============================================================================
-# Only read when webserver_package == 'nginx'.
-
 # ---------------------------------------------------------------------------
-# 2a. Core config — feeds templates/nginx.conf.j2 (http block globals)
-# ---------------------------------------------------------------------------
-
+# NGINX CONFIGURATION
 # OS user nginx worker processes run as. Auto-detected; you shouldn't need
 # to change this unless you're on an unusual distro.
+
 nginx_user: "{{ 'www-data' if ansible_os_family == 'Debian' else 'nginx' }}"
 
-# OS service name. Always "nginx" — the package name IS the service name
-# for nginx on every distro this playbook targets. Exists mainly for
-# symmetry with httpd_service_name (which DOES vary by distro), so the
-# playbook can resolve "the active backend's service name" the same way
-# regardless of which backend is selected.
+# OS service name. Always "nginx" 
 nginx_service_name: nginx
 
-# Number of nginx worker processes. "auto" matches it to available CPU
-# cores — almost always the right choice; set a fixed integer only if you
-# have a specific reason to pin it lower/higher.
+# Number of nginx worker processes. "auto" matches it to available CPU cores 
 nginx_worker_processes: auto
 
 # Max simultaneous connections each worker process can hold open.
@@ -70,8 +40,7 @@ nginx_worker_connections: 1024
 # Seconds an idle keep-alive connection is held open before nginx closes it.
 nginx_keepalive_timeout: 65
 
-# Max allowed size of a client request body (e.g. file uploads). nginx
-# units: k/m/g (lowercase).
+# Max allowed size of a client request body (e.g. file uploads)
 nginx_client_max_body_size: 10m
 
 # Enables gzip compression for the response types listed below.
@@ -85,8 +54,7 @@ nginx_gzip_types:
   - application/xml
 
 # ---------------------------------------------------------------------------
-# 2b. Server blocks (virtual hosts) — feeds templates/server_block.conf.j2
-# ---------------------------------------------------------------------------
+# Server blocks (virtual hosts) — feeds templates/server_block.conf.j2
 # Each item becomes its own file: /etc/nginx/conf.d/<name>.conf
 #
 # A block is exactly one of three things, decided by which keys are set:
@@ -108,11 +76,8 @@ nginx_server_blocks:
     proxy_pass: "http://api_backend"   # must match a `name:` in nginx_upstreams below
 
 # ---------------------------------------------------------------------------
-# 2c. Reverse proxy / upstream pools — feeds templates/server_block.conf.j2
-# ---------------------------------------------------------------------------
-# Backend pools that a server block can point at via `proxy_pass`. Not used
-# at all by httpd — there's currently no Apache equivalent (mod_proxy_balancer
-# would be the analog if this is ever needed there).
+# Reverse proxy / upstream pools — feeds templates/server_block.conf.j2
+# Backend pools that a server block can point at via proxy_pass
 nginx_upstreams:
   - name: api_backend             # referenced by `proxy_pass: "http://api_backend"` above
     strategy: least_conn          # load-balancing algorithm: omit for round-robin (nginx default), or least_conn / ip_hash
@@ -134,15 +99,9 @@ nginx_proxy_buffers_number: 8
 nginx_proxy_buffers_size: 4k
 
 # ---------------------------------------------------------------------------
-# 2d. SSL/TLS — feeds templates/nginx.conf.j2 and templates/server_block.conf.j2
-# ---------------------------------------------------------------------------
+# SSL/TLS — feeds templates/nginx.conf.j2 and templates/server_block.conf.j2
 # IMPORTANT: this playbook does NOT issue or manage certificates. These
 # paths are assumed to already contain a valid cert/key on the target host
-# — delivered by a separate process (certbot, community.crypto, a vault/
-# secrets pipeline, or copied in manually). In a real deployment, TLS
-# termination would more likely happen at a reverse proxy in front of this
-# host rather than here; these settings exist for the case where this host
-# terminates TLS itself.
 nginx_ssl_cert_path: /etc/nginx/ssl/api.example.com.crt
 nginx_ssl_key_path: /etc/nginx/ssl/api.example.com.key
 nginx_ssl_protocols: "TLSv1.2 TLSv1.3"
@@ -153,42 +112,29 @@ nginx_hsts_enabled: true
 nginx_hsts_max_age: 31536000   # seconds (1 year) — HSTS header lifetime
 
 
-# =============================================================================
-# 3. HTTPD (APACHE) CONFIGURATION (httpd_*)
-# =============================================================================
-# Only read when webserver_package == 'httpd'. Mirrors the structure of the
-# nginx_* block above, expressed in Apache's own terms rather than forcing
-# nginx vocabulary onto it. Scope is vhosts + SSL — there is currently no
-# reverse-proxy/upstream-pool equivalent of nginx_upstreams (httpd vhosts
-# only serve static content; see README_DESIGN.md for why this was scoped
-# down deliberately).
+# ---------------------------------------------------------------------------
+# HTTPD (APACHE) CONFIGURATION (httpd_*)
+# Only read when webserver_package == 'httpd'
 
 # ---------------------------------------------------------------------------
-# 3a. Core config — feeds templates/httpd.conf.j2
-# ---------------------------------------------------------------------------
+# Core config — feeds templates/httpd.conf.j2
+
 
 # OS package name. "apache2" on Debian/Ubuntu, "httpd" on RHEL-family.
 httpd_package_name: "{{ 'apache2' if ansible_os_family == 'Debian' else 'httpd' }}"
 
-# OS service name — happens to match the package name on both families
-# here, but kept as its own variable (rather than reusing
-# httpd_package_name) since that's not guaranteed in general.
+# OS service name — happens to match the package name on both families, but kept as a separate var in case of distros where this isn't the case.
 httpd_service_name: "{{ 'apache2' if ansible_os_family == 'Debian' else 'httpd' }}"
 
 # OS user/group Apache runs as. NOTE: on Debian, these are NOT set via
-# User/Group directives in the main conf — Debian's apache2 controls this
-# through /etc/apache2/envvars (APACHE_RUN_USER/APACHE_RUN_GROUP) instead,
-# and templates/httpd.conf.j2 respects that split. These variables are
-# still used directly for filesystem ownership (e.g. vhost document roots).
+# User/Group directives in the main conf — Debian's apache2 controls this through /etc/apache2/envvars
 httpd_user: "{{ 'www-data' if ansible_os_family == 'Debian' else 'apache' }}"
 httpd_group: "{{ 'www-data' if ansible_os_family == 'Debian' else 'apache' }}"
 
 # Email shown on Apache's default error pages / ServerAdmin directive.
 httpd_server_admin: webmaster@example.com
 
-# MPM event worker tuning — Apache's rough equivalent of nginx's
-# worker_processes / worker_connections. Defaults here are conservative,
-# suitable for a small-to-medium VM; tune upward for higher traffic.
+# MPM event worker tuning 
 httpd_start_servers: 2          # child processes spawned at startup
 httpd_min_spare_threads: 25     # minimum idle threads kept ready
 httpd_max_spare_threads: 75     # maximum idle threads before some are killed
@@ -199,9 +145,7 @@ httpd_max_request_workers: 150  # max simultaneous connections server-wide
 # Seconds an idle keep-alive connection is held open before Apache closes it.
 httpd_keepalive_timeout: 65
 
-# Max allowed size of a client request body. Apache wants raw bytes via
-# LimitRequestBody; this is given here in a human-friendly "10M" form and
-# converted to bytes inside templates/httpd.conf.j2.
+# Max allowed size of a client request body. 
 httpd_client_max_body_size: 10M
 
 # Enables compression (via mod_deflate) for the response types listed below.
@@ -215,15 +159,9 @@ httpd_gzip_types:
   - application/xml
 
 # ---------------------------------------------------------------------------
-# 3b. Virtual hosts — feeds templates/vhost.conf.j2
-# ---------------------------------------------------------------------------
+# Virtual hosts — feeds templates/vhost.conf.j2
 # Each item becomes its own file: sites-enabled/<name>.conf (Debian) or
-# conf.d/<name>.conf (RHEL-family). The playbook also creates each
-# non-redirect vhost's document_root automatically before deploying its
-# config — you don't need to pre-create these directories. Note this only
-# creates the empty directory, it does not deploy content into it (same gap
-# as nginx — webserver_index_path only covers the one default docroot), so
-# a freshly added vhost will 403 until something puts a file there.
+# conf.d/<name>.conf (RHEL-family). 
 #
 # A vhost is exactly one of two things, decided by redirect_to_https:
 #   1. Redirect-only — redirect_to_https: true (ignores document_root/ssl_enabled)
@@ -245,8 +183,7 @@ httpd_vhosts:
     document_root: /var/www/api.example.com
 
 # ---------------------------------------------------------------------------
-# 3c. SSL/TLS — feeds templates/httpd.conf.j2 and templates/vhost.conf.j2
-# ---------------------------------------------------------------------------
+# SSL/TLS — feeds templates/httpd.conf.j2 and templates/vhost.conf.j2
 # Same assumption as nginx_ssl_* above: certs already exist on the target,
 # delivered by a separate cert-management process — this playbook doesn't
 # issue or manage them.

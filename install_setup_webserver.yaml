@@ -1,65 +1,38 @@
 ---
-# =============================================================================
 # AnsibleTest — Web server provisioning playbook
-# =============================================================================
-# Installs and configures ONE of two webserver backends — nginx or httpd
-# (Apache) — on every host in the `webservers` group. Which backend runs is
-# controlled entirely by the `webserver_package` variable in
-# group_vars/webservers.yml; see README_DESIGN.md for the full picture.
+# Installs and configures httpd or nginx on every host in the webservers group.
+# controlled entirely by the webserver_package variable in group_vars/webservers.yml
 #
-# High-level flow per run:
-#   1. Stop/disable whichever backend is NOT selected (handles switching
-#      an already-configured host from one backend to the other).
-#   2. Install the selected backend's package.
+# Order of operations:
+#   1. Stop/disable whichever backend is NOT selected 
+#   2. Install the selected package.
 #   3. Deploy its config + per-site templates.
-#   4. Validate the rendered config (`nginx -t` / `apache2ctl -t`).
+#   4. Validate the rendered config
 #   5. Start and enable the service.
-# Steps 2-5 are wrapped in block/rescue/always — see the comment above that
-# block below for details on the error-handling strategy.
-# =============================================================================
+# Steps 2-5 are wrapped in block/rescue/always 
+# -------------------------------------------------------------------
 
 - name: Configure the web server
   hosts: webservers
-  # become is required because installing packages, writing to /etc, and
-  # managing services all need root. Assumes passwordless sudo is already
-  # set up for ansible_user (e.g. via an SSH key + sudoers NOPASSWD entry);
-  # otherwise run with `--ask-become-pass` / `-K`.
+  # Assumes passwordless sudo is already set up for ansible_user (e.g. via an SSH key + sudoers NOPASSWD entry) otherwise run with `--ask-become-pass` / `-K`.
   become: true
 
   vars:
-    # Resolves the actual OS package/service name from webserver_package.
-    # nginx's package/service name is "nginx" on every distro we target;
-    # httpd's package is "apache2" on Debian and "httpd" on RHEL-family.
-    # Both branches are symmetric — neither nginx_* nor httpd_* need manual
-    # edits when switching webserver_package; only the matching block is read.
+    # nginx's package/service name is "nginx" on every distro we target httpd's package is "apache2" on Debian and "httpd" on RHEL-family.
+    # Both branches are symmetric — neither nginx_* nor httpd_* need manual edits when switching webserver_package; only the matching block is read.
     _webserver_package_name: "{{ httpd_package_name if webserver_package == 'httpd' else webserver_package }}"
     _webserver_service_name: "{{ httpd_service_name if webserver_package == 'httpd' else nginx_service_name }}"
 
-    # The OTHER webserver's service name — used to stop/disable it below.
-    # If a host was previously switched from nginx to httpd (or vice versa),
-    # the old service is left running and installed unless explicitly
+    # If a host was previously switched from nginx to httpd (or vice versa) the old service is left running and installed unless explicitly
     # deactivated, which causes port 80/443 bind conflicts for the new one.
     _inactive_webserver_service_name: "{{ nginx_service_name if webserver_package == 'httpd' else httpd_service_name }}"
 
   tasks:
-    # ===================================================================
     # Error handling: block / rescue / always
-    # ===================================================================
-    # Everything that provisions the webserver lives inside this block. If
-    # any task in it fails, Ansible jumps straight to rescue: (skipping the
-    # rest of the block) instead of just halting the whole play with a raw
-    # traceback. always: then runs no matter what, whether the block
-    # succeeded or rescue: handled a failure.
+    # Everything that provisions the webserver lives inside this block. Ifany task in it fails, a rescue is executed
     - name: Provision and configure the selected web server
       block:
-        # -----------------------------------------------------------------
-        # Deactivate whichever webserver ISN'T selected, so switching
-        # webserver_package on an already-configured host doesn't leave the
-        # old service bound to the same ports as the new one. Uses
-        # ignore_errors rather than a service-existence check because a host
-        # that has never run the other backend won't have the service unit at
-        # all, and that's an expected, harmless case here.
-        # -----------------------------------------------------------------
+        # Deactivate whichever webserver ISN'T selected, so switching webserver_package on an already-configured host doesn't leave the old service bound to the same ports as the new one.
         - name: Stop and disable the inactive web server
           ansible.builtin.service:
             name: "{{ _inactive_webserver_service_name }}"
@@ -68,8 +41,7 @@
           register: _inactive_service_result
           failed_when:
             - _inactive_service_result is failed
-            # Tolerate "service not found" (host never had the other backend
-            # installed) — but let any other failure (e.g. permissions) surface.
+            # Tolerate "service not found" but let any other failure (e.g. permissions) surface.
             - "'Could not find the requested service' not in (_inactive_service_result.msg | default(''))"
 
         - name: Install web server package
@@ -91,12 +63,8 @@
           loop: [absent, directory]
           when: webserver_package == 'httpd'
 
-
-        # nginx's binary lives in /usr/sbin, which often isn't on the PATH
-        # for interactive (non-login) shells. This just makes it convenient
-        # to run `nginx`/`apachectl` by hand when SSH'd in directly — it has
-        # no effect on the playbook itself, which calls binaries by full
-        # context (PATH is already correct for module/command execution).
+        # -------------------------------------------------------------------
+        # nginx's binary lives in /usr/sbin, same for httpd. Adds it to the PATH
         - name: Ensure /usr/sbin and /sbin are in PATH for interactive shells
           ansible.builtin.lineinfile:
             path: "{{ ansible_env.HOME }}/.bashrc"
@@ -114,9 +82,9 @@
             mode: "0644"
           notify: Reload web service
 
-        # -----------------------------------------------------------------
+        # -------------------------------------------------------------------
         # nginx-specific deployment
-        # -----------------------------------------------------------------
+
         - name: Deploy core nginx.conf
           ansible.builtin.template:
             src: templates/nginx.conf.j2
@@ -147,15 +115,9 @@
           notify: Reload web service
           when: webserver_package == 'nginx'
 
-        # -------------------------------------------------------------------
-        # Validate full config explicitly (belt-and-braces; also acts as a
-        # clear failure point if conf.d/*.conf has an issue the per-file
-        # `validate:` on nginx.conf wouldn't catch, since conf.d is included)
-        # failed_when: false here is deliberate — it lets the play continue
-        # to the targeted "Report ... validation failure" debug task below
-        # instead of jumping straight to rescue:. The explicit fail task
-        # right after that debug message is what actually stops the play.
-        # -------------------------------------------------------------------
+        # Validate full config explicitly 
+        # failed_when: false here is deliberate it lets the play continue to the targeted "Report ... validation failure" debug task below
+
         - name: Validate full nginx configuration
           ansible.builtin.command: nginx -t
           register: nginx_config_test
@@ -163,9 +125,9 @@
           failed_when: false
           when: webserver_package == 'nginx'
 
-        # -----------------------------------------------------------------
+        # -------------------------------------------------------------------
         # httpd-specific deployment
-        # -----------------------------------------------------------------
+
         - name: Deploy core httpd.conf
           ansible.builtin.template:
             src: templates/httpd.conf.j2
@@ -213,7 +175,7 @@
         # -------------------------------------------------------------------
         # Validate full config explicitly — httpd equivalent of `nginx -t`.
         # failed_when: false for the same reason as the nginx task above.
-        # -------------------------------------------------------------------
+
         - name: Validate full httpd configuration
           ansible.builtin.command: "{{ 'apache2ctl' if ansible_os_family == 'Debian' else 'httpd' }} -t"
           register: httpd_config_test
@@ -222,14 +184,8 @@
           when: webserver_package == 'httpd'
 
         # -------------------------------------------------------------------
-        # Targeted failure check: config validation is the single most
-        # likely and most actionable failure point in this play (a typo'd
-        # template variable, a bad cert path, a missing Apache module). This
-        # ansible.builtin.fail task prints the validator's own stderr in its
-        # message — that's distinct from, and more specific than, the
-        # generic rescue: handler below, so the actual cause is visible
-        # before Ansible even gets to deciding the whole block has failed.
-        # -------------------------------------------------------------------
+        # Targeted failure check: config validation is the single most likely failure point in this play. This
+        # ansible.builtin.fail task prints the validator's own stderr in its message 
         - name: Fail with details if nginx configuration is invalid
           ansible.builtin.fail:
             msg: >-
@@ -256,7 +212,6 @@
 
         # -------------------------------------------------------------------
         # Ensure service is enabled and running
-        # -------------------------------------------------------------------
         - name: Ensure web server service is enabled and started
           ansible.builtin.service:
             name: "{{ _webserver_service_name }}"
@@ -264,10 +219,8 @@
             state: started
 
       rescue:
-        # Runs only if something above failed. Keeps the failure visible
-        # and human-readable instead of just stopping on a raw traceback;
+        # Runs only if something above failed. Keeps the failure visible and human-readable instead of just stopping on a raw traceback
         # re-raises afterwards so the play still ends in a failed state
-        # (CI/automation callers should not see this as a silent success).
         - name: Report web server provisioning failure
           ansible.builtin.debug:
             msg: >-
@@ -281,8 +234,6 @@
 
       always:
         # Runs whether the block succeeded or rescue: handled a failure.
-        # Useful as a single place to confirm which backend was attempted,
-        # for example when scanning a long CI log.
         - name: Record which web server backend was targeted this run
           ansible.builtin.debug:
             msg: "Run finished for webserver_package={{ webserver_package }} on {{ inventory_hostname }}."

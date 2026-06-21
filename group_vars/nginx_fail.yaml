@@ -1,24 +1,15 @@
 ---
 
 # ---------------------------------------------------------------------------
-# Package / service switch
-# ---------------------------------------------------------------------------
-# webserver_package is the single source of truth for which webserver this
-# host runs. Valid values: "nginx" or "httpd". The playbook reads this to
-# decide which install/config/template tasks to run; group-specific vars
-# below (nginx_* vs httpd_*) only apply when this matches.
+# This file is designed to fail to test the block commands in the playbook.
 webserver_package: nginx
 
 webserver_index_content: "Welcome to My Web Server"
 
-# Index path depends on which webserver owns the docroot, so it's expressed
-# as a lookup keyed by webserver_package rather than duplicated per-package.
 webserver_index_path: "{{ {'nginx': '/usr/share/nginx/html/index.html',
                             'httpd': '/var/www/html/index.html'}[webserver_package] }}"
 
-# ---------------------------------------------------------------------------
-# Core config (nginx.conf — http block globals)
-# ---------------------------------------------------------------------------
+
 
 nginx_user: "{{ 'www-data' if ansible_os_family == 'Debian' else 'nginx' }}"
 nginx_service_name: nginx   # the package name IS the service name for nginx on every distro we target
@@ -36,10 +27,7 @@ nginx_gzip_types:
   - text/xml
   - application/xml
 
-# ---------------------------------------------------------------------------
-# Server blocks (virtual hosts)
-# ---------------------------------------------------------------------------
-# Each item becomes its own file in conf.d/, e.g. conf.d/app.example.com.conf
+
 nginx_server_blocks:
   - name: app.example.com
     listen_port: 80
@@ -54,9 +42,7 @@ nginx_server_blocks:
     ssl_enabled: true   # <-- FAIL TEST: changed from false so the broken SSL directive below is actually reached
     proxy_pass: "http://api_backend"   # references the upstream defined below
 
-# ---------------------------------------------------------------------------
-# Reverse proxy / upstream pools
-# ---------------------------------------------------------------------------
+
 nginx_upstreams:
   - name: api_backend     #Name for the pool servers that the reverse proxy runs
     strategy: least_conn          # round-robin (default), least_conn, ip_hash
@@ -75,13 +61,7 @@ nginx_proxy_buffer_size: 4k
 nginx_proxy_buffers_number: 8
 nginx_proxy_buffers_size: 4k
 
-# ---------------------------------------------------------------------------
-# SSL/TLS
-# ---------------------------------------------------------------------------
-# In real use, certs are usually delivered by a separate cert-management
-# step (certbot role, community.crypto, or copied from a vault/secret store).
-# This playbook assumes certs already exist at these paths on the target.
-# This is only an example, how I would really manage SSL: I would have the certificate in a higher reverse proxy
+
 nginx_ssl_cert_path: /etc/nginx/ssl/api.example.com.crt
 nginx_ssl_key_path: /etc/nginx/ssl/api.example.com.key
 nginx_ssl_protocols: "TLSv1.2 TLSv1.3"
@@ -91,30 +71,15 @@ nginx_ssl_session_timeout: "1d"
 nginx_hsts_enabled: true
 nginx_hsts_max_age: 31536000   # 1 year, in seconds
 
-# ===========================================================================
-# httpd (Apache) configuration
-# ===========================================================================
-# Mirrors the structure of the nginx_* block above, but expressed in Apache's
-# own terms rather than forcing nginx vocabulary onto it. Only consulted when
-# webserver_package == 'httpd'. Scope is vhosts + SSL — no reverse proxy /
-# upstream pools (see nginx_upstreams for that pattern if it's ever needed
-# here; mod_proxy_balancer would be the Apache equivalent).
-
-# ---------------------------------------------------------------------------
-# Core config (httpd.conf — server-wide globals)
-# ---------------------------------------------------------------------------
 
 httpd_package_name: "{{ 'apache2' if ansible_os_family == 'Debian' else 'httpd' }}"
 httpd_service_name: "{{ 'apache2' if ansible_os_family == 'Debian' else 'httpd' }}"
 
-# Apache's user/group directives only apply on RHEL-family httpd.conf;
-# Debian's apache2 sets this via envvars instead, but we keep one var for
-# the template to reference either way.
 httpd_user: "{{ 'www-data' if ansible_os_family == 'Debian' else 'apache' }}"
 httpd_group: "{{ 'www-data' if ansible_os_family == 'Debian' else 'apache' }}"
 
 httpd_server_admin: webmaster@example.com
-# MPM event worker tuning — rough equivalent of nginx_worker_connections
+
 httpd_start_servers: 2
 httpd_min_spare_threads: 25
 httpd_max_spare_threads: 75
@@ -134,11 +99,7 @@ httpd_gzip_types:
   - text/xml
   - application/xml
 
-# ---------------------------------------------------------------------------
-# Virtual hosts
-# ---------------------------------------------------------------------------
-# Each item becomes its own file in sites-available (Debian) or conf.d
-# (RHEL-family) via the same loop pattern used for nginx_server_blocks.
+
 httpd_vhosts:
   - name: app.example.com
     listen_port: 80
@@ -152,11 +113,7 @@ httpd_vhosts:
     ssl_enabled: true
     document_root: /var/www/api.example.com
 
-# ---------------------------------------------------------------------------
-# SSL/TLS
-# ---------------------------------------------------------------------------
-# Same assumption as nginx_ssl_*: certs already exist on the target,
-# delivered by a separate cert-management step.
+
 httpd_ssl_cert_path: /etc/httpd/ssl/api.example.com.crt
 httpd_ssl_key_path: /etc/httpd/ssl/api.example.com.key
 httpd_ssl_protocols: "TLSv1.2 TLSv1.3"
